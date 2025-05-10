@@ -1,0 +1,31 @@
+---
+- name: Configurer le réseau avec une IP dynamique (ip_address)
+  hosts: baremetal-two
+  become: yes
+
+  tasks:
+    - name: Écrire la configuration Netplan avec l'IP fournie
+      copy:
+        dest: /etc/netplan/01-netcfg.yaml
+        content: |
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              enp5s0:
+                dhcp4: no
+                addresses:
+                  - {{ ip_address }}/24
+                nameservers:
+                  addresses:
+                    - 8.8.8.8
+                    - 8.8.4.4
+                routes:
+                  - to: 0.0.0.0/0
+                    via: 192.168.100.1
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Appliquer la configuration réseau
+      command: netplan apply

@@ -1,0 +1,67 @@
+---
+- name: Création d'un nœud Bare Metal via Ironic Standalone
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+
+    - name: Créer un nœud via baremetal CLI
+      shell: |
+        baremetal node create \
+          --driver ipmi \
+          --name {{ node_name }} \
+          --driver-info ipmi_address=192.168.200.1 \
+          --driver-info ipmi_port={{ ipmi_port }} \
+          --driver-info ipmi_username=admin \
+          --driver-info ipmi_password=password \
+          --driver-info deploy_kernel=http://192.168.200.2:8080/ipa.kernel \
+          --driver-info deploy_ramdisk=http://192.168.200.2:8080/ipa.initramfs \
+          --boot-interface ipxe \
+          --network-interface noop \
+          --power-interface ipmitool \
+          --deploy-interface direct \
+          --management-interface ipmitool
+      register: node_creation
+
+    - name: Extraire le UUID du nœud
+      shell: "echo \"{{ node_creation.stdout }}\" | grep '^| uuid' | awk -F'|' '{print $3}' | tr -d ' '"
+      register: node_uuid_result
+
+    - name: Enregistrer le UUID comme variable
+      set_fact:
+        node_uuid: "{{ node_uuid_result.stdout }}"
+
+    - name: Créer un port avec adresse MAC
+      shell: |
+        baremetal port create \
+          --node {{ node_uuid }} \
+          {{ mac_address }}
+
+    - name: Allumer le nœud
+      shell: baremetal node power on {{ node_name }}
+
+    - name: Attente de 20 secondes
+      pause:
+        seconds: 20
+
+    - name: Passer le nœud en état 'manage'
+      shell: baremetal node manage {{ node_name }}
+      
+    - name: Attente de 45 secondes
+      pause:
+        seconds: 45
+        
+    - name: Lancer l'inspection du nœud
+      shell: baremetal node inspect {{ node_name }}
+      
+    - name: Attente de 120 secondes
+      pause:
+        seconds: 120
+ 
+    - name: Passer le nœud en état 'available'
+      shell: baremetal node provide {{ node_name }}
+
+    - name: Nettoyage du disk
+      pause:
+        seconds: 30
+

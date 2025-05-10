@@ -1,0 +1,92 @@
+---
+- name: Configuration manuelle d’un hôte OVN avec Open vSwitch
+  hosts: baremetal-two
+  become: yes
+  gather_facts: yes
+
+  tasks:
+
+
+    - name: Mise à jour de apt
+      apt:
+        update_cache: yes
+      ignore_errors: true
+
+    - name: Installer Open vSwitch et OVN
+      apt:
+        name:
+          - openvswitch-switch
+          - ovn-host
+        state: present
+        update_cache: yes
+
+    - name: Définir OVN_NB_DB et OVN_SB_DB pour la session en cours
+      shell: |
+        export OVN_NB_DB=tcp:192.168.100.125:6641
+        export OVN_SB_DB=tcp:192.168.100.125:6642
+      args:
+        executable: /bin/bash
+
+    - name: Rendre les variables OVN permanentes dans /etc/environment
+      lineinfile:
+        path: /etc/environment
+        line: "{{ item }}"
+        create: yes
+      loop:
+        - 'OVN_NB_DB=tcp:192.168.100.125:6641'
+        - 'OVN_SB_DB=tcp:192.168.100.125:6642'
+
+    - name: Recharger les variables d’environnement
+      shell: source /etc/environment
+      args:
+        executable: /bin/bash
+
+    - name: Configurer OVN remote
+      command: ovs-vsctl set open . external-ids:ovn-remote=tcp:192.168.100.125:6642
+
+    - name: Configurer OVN encap type
+      command: ovs-vsctl set open . external-ids:ovn-encap-type=geneve
+
+    - name: Configurer OVN encap IP
+      command: ovs-vsctl set open . external-ids:ovn-encap-ip={{ ip_enp5s0 }}
+
+    - name: Créer le bridge br-int
+      command: ovs-vsctl add-br br-int
+      ignore_errors: true
+
+    - name: Définir les protocoles du bridge br-int
+      command: ovs-vsctl set bridge br-int protocols=OpenFlow13,OpenFlow15
+
+    - name: Ajouter les bridge mappings
+      command: ovs-vsctl set open . external-ids:ovn-bridge-mappings=physnet1:br-int
+
+    - name: Ajouter le port interne ovn-access-port
+      command: >
+        ovs-vsctl add-port br-int ovn-access-port -- set interface ovn-access-port type=internal external_ids:iface-id={{ iface_id }}
+      ignore_errors: true
+
+
+    - name: Activer l'interface ovn-access-port
+      command: ip link set dev ovn-access-port up
+
+    - name: Récupérer l'adresse MAC de l'interface ovn-access-port
+      command: cat /sys/class/net/ovn-access-port/address
+      register: iface_mac
+
+    - name: Ajouter le port logique au switch
+      command: ovn-nbctl lsp-add {{ logical_switch }} {{ iface_id }}
+
+    - name: Définir l'adresse MAC statique
+      command: ovn-nbctl lsp-set-addresses {{ iface_id }} "{{ iface_mac.stdout }}"
+
+    - name: Vérifier l'état du port logique
+      command: ovn-nbctl lsp-get-up {{ iface_id }}
+
+    - name: Activer l'adresse dynamique + MAC
+      command: ovn-nbctl lsp-set-addresses {{ iface_id }} "{{ iface_mac.stdout }} dynamic"
+
+    - name: Appliquer les options DHCP
+      command: ovn-nbctl set Logical_Switch_Port {{ iface_id }} dhcpv4_options={{ dhcp_option }}
+
+    - name: Obtenir une IP via DHCP
+      command: dhclient ovn-access-port
